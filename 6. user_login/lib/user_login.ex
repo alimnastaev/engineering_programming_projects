@@ -1,10 +1,16 @@
 defmodule UserLogin do
   @moduledoc false
+  use Agent
+
+  alias ErrorCounter
+  alias Colors
 
   #! ENTRYPOINT function
   def main() do
-    username = IO.gets("What is your username?\n") |> String.trim()
-    password = IO.gets("What is your password?\n") |> String.trim()
+    ErrorCounter.start()
+
+    username = IO.gets("\nWhat is your username? \n") |> String.trim()
+    password = IO.gets("\nWhat is your password? \n") |> String.trim()
 
     creds_validation(username, password)
     |> access()
@@ -13,6 +19,17 @@ defmodule UserLogin do
   defp creds_validation(username, password) do
     parse()
     |> find_user(username, password)
+  end
+
+  #! PARSE local credentials.json to proper JSON format
+  defp parse(filename \\ "credentials.json") do
+    case File.read(filename) do
+      {:ok, body} ->
+        decode_json(body)
+
+      {:error, reason} ->
+        {:error, "#{:file.format_error(reason)}"}
+    end
   end
 
   #! finding a User in JSON file
@@ -31,7 +48,8 @@ defmodule UserLogin do
 
   #! All ACCESS variations
   defp access({:ok, "\nACCESS GRANTED \n" = message}) do
-    IO.puts(message)
+    ErrorCounter.stop()
+    IO.puts(Colors.yellow() <> "#{message}" <> Colors.reset())
     IO.puts("REVEALING DEEP DARK SECRET... \n\n*** \n")
     get_quote()
   end
@@ -40,28 +58,62 @@ defmodule UserLogin do
   defp access({:error, "json file is corrupted"}), do: IO.puts("json file is corrupted")
 
   defp access({:error, error}) do
-    IO.puts(error)
-    main()
+    ErrorCounter.update()
+    count = ErrorCounter.get()
+
+    case count do
+      2 ->
+        error_message(error, count)
+        main()
+
+      1 ->
+        error_message(error, count)
+        main()
+
+      0 ->
+        error_massage()
+    end
   end
 
-  #! PARSE local credentials.json to proper JSON format
-  defp parse(filename \\ "credentials.json") do
-    case File.read(filename) do
-      {:ok, body} ->
-        decode_json(body)
+  defp error_massage() do
+    ErrorCounter.stop()
 
-      {:error, reason} ->
-        {:error, "#{:file.format_error(reason)}"}
-    end
+    IO.puts(
+      Colors.red() <>
+        "*** ACCESS DENIED *** \n" <>
+        Colors.reset()
+    )
+
+    IO.puts("We can't find that username and password, but you can try again or sign up")
+  end
+
+  defp error_message(error, count) when count == 2 do
+    IO.puts(error)
+
+    IO.puts(
+      Colors.red() <>
+        "*** You have #{count} more tries remaining *** \n" <>
+        Colors.reset()
+    )
+  end
+
+  defp error_message(error, count) do
+    IO.puts(error)
+
+    IO.puts(
+      Colors.red() <>
+        "*** You have #{count} more try remaining *** \n" <>
+        Colors.reset()
+    )
   end
 
   #! Managing to decode json file credentials.json and HTTP request
   defp decode_json(body) do
-    {:ok, [head | _] = list_of_maps} = Jason.decode(body)
+    {:ok, [first_el | _] = list_of_maps} = Jason.decode(body)
 
     cond do
       # when decoding credentials.json
-      Map.has_key?(head, "username") ->
+      Map.has_key?(first_el, "username") ->
         {:ok, list_of_maps}
 
       # when decoding HTTP response
